@@ -66,7 +66,7 @@ describe("TieredCache", function () {
     expect(val1).to.equal("xyz");
 
     // Wait for expiry + pubsub
-    await new Promise((r) => setTimeout(r, 200));
+    await new Promise((r) => setTimeout(r, 500)); // redis active-expire runs every 100ms
 
     const val2 = await tiered.get("ttlkey");
     expect(val2).to.be.undefined;
@@ -89,5 +89,25 @@ describe("TieredCache", function () {
 
     const val = await tiered.get("x");
     expect(val).to.be.undefined;
+  });
+
+  it("expires tier1 entries after tier1Ttl without a notification", async () => {
+    await tiered.close();
+    tiered = new TieredCache(redis, new AsyncCache(), new AsyncCache(new RedisCache(redis)), { tier1Ttl: 50 });
+
+    // set() path: plain SET in tier2 emits no event under Exg, so only the ttl can evict tier1
+    await tiered.set("k", "v1");
+    await tiered.tier2.set("k", "v2");
+    expect(await tiered.get("k")).to.equal("v1");
+
+    await new Promise((r) => setTimeout(r, 60));
+    expect(await tiered.get("k")).to.equal("v2");
+
+    // get() write-back path gets the same ttl
+    await tiered.tier2.set("k", "v3");
+    expect(await tiered.get("k")).to.equal("v2");
+
+    await new Promise((r) => setTimeout(r, 60));
+    expect(await tiered.get("k")).to.equal("v3");
   });
 });
