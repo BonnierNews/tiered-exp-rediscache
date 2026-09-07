@@ -19,6 +19,7 @@ export class TieredCache extends EventEmitter {
    * @param {Object} options
    *        options.db - Redis DB index for notifications (default 0)
    *        options.redis - ioredis options for the subscriber (optional)
+   *        options.tier1Ttl - max ms an entry may live in tier1 regardless of notifications (optional)
    */
   constructor(redisClient, tier1, tier2, options = {}) {
     super();
@@ -30,6 +31,7 @@ export class TieredCache extends EventEmitter {
     this.redisClient = redisClient;
     this.tier1 = tier1;
     this.tier2 = tier2;
+    this.tier1Ttl = options.tier1Ttl;
     // Promise cache for preventing duplicate fetches
     this.inflightPromises = new Map();
 
@@ -64,7 +66,7 @@ export class TieredCache extends EventEmitter {
     try {
       val = await fetchPromise;
       if (val !== undefined) {
-        await this.tier1.set(key, val);
+        await this.tier1.set(key, val, this.tier1Ttl);
       }
       // console.log(`${key} is ${val} in tier2`);
       return val;
@@ -79,7 +81,7 @@ export class TieredCache extends EventEmitter {
   /** Set a key in both tiers */
   async set(key, value, ttl) {
     await this.tier2.set(key, value, ttl);
-    await this.tier1.set(key, value, ttl);
+    await this.tier1.set(key, value, minTtl(ttl, this.tier1Ttl));
     this.inflightPromises.delete(key);
     this.emit("set", { key, value, ttl });
   }
@@ -110,4 +112,10 @@ export class TieredCache extends EventEmitter {
   async close() {
     if (this.subscriber) await this.subscriber.quit();
   }
+}
+
+/** Shortest of the given ttls, ignoring undefined. Undefined if none given. */
+function minTtl(...ttls) {
+  const nums = ttls.filter((t) => typeof t === "number");
+  return nums.length ? Math.min(...nums) : undefined;
 }
